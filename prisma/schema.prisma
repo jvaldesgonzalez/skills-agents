@@ -1,0 +1,36 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Superpower {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  content     String   @default("")
+  tools       String   @default("[]") // JSON array
+  scripts     String   @default("[]") // JSON array
+  agents      SuperpowerOnAgents[]
+}
+
+model Agent {
+  id          String   @id @default(cuid())
+  name        String
+  basePrompt  String   @default("")
+  superpowers SuperpowerOnAgents[]
+}
+
+model SuperpowerOnAgents {
+  agentId     String
+  superpowerId String
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  superpower  Superpower @relation(fields: [superpowerId], references: [id], onDelete: Cascade)
+  @@id([agentId, superpowerId])
+}
