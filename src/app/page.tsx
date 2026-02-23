@@ -1,18 +1,21 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
 import { useAppStore, Agent } from '@/store';
-import { Plus, Trash2, Bot, MessageSquare, Shield, X, Send, User, Settings2, Search } from 'lucide-react';
+import { Plus, Trash2, Bot, MessageSquare, Shield, X, Send, User, Settings2, Search, FileUp, Mic } from 'lucide-react';
 
-interface Message {
-  id: string;
-  role: 'user' | 'agent';
-  content: string;
+function getMessageText(msg: { parts: Array<{ type?: string; text?: string }> }): string {
+  return msg.parts
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string')
+    .map((p) => p.text)
+    .join('');
 }
 
 export default function AgentsPage() {
-  const { agents, superpowers, addAgent, updateAgent, deleteAgent, fetchInitialData } = useAppStore();
+  const { agents, superpowers, documents, addAgent, updateAgent, deleteAgent, fetchInitialData, fetchDocuments, clearDocuments, uploadDocument, deleteDocument } = useAppStore();
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -21,11 +24,29 @@ export default function AgentsPage() {
   const [spSearchQuery, setSpSearchQuery] = useState('');
   const [spSearchFocused, setSpSearchFocused] = useState(false);
   
-  // Chat state
-  const [messages, setMessages] = useState<Record<string, Message[]>>({});
-  const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [chatInput, setChatInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [chatMode, setChatMode] = useState<'text' | 'voice'>('text');
+
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: '/api/chat',
+        body: { agentId: selectedAgentId, threadId: selectedAgentId ?? 'default', mode: chatMode },
+      }),
+    [selectedAgentId, chatMode]
+  );
+
+  const {
+    messages: chatMessages,
+    sendMessage,
+    status,
+  } = useChat({
+    transport,
+    id: selectedAgentId ?? 'no-agent',
+  });
 
   const [formData, setFormData] = useState<Omit<Agent, 'id'>>({
     name: '',
@@ -34,17 +55,25 @@ export default function AgentsPage() {
   });
 
   const selectedAgent = agents.find(a => a.id === selectedAgentId) || null;
-  const currentMessages = selectedAgentId ? (messages[selectedAgentId] || []) : [];
+  const isTyping = status === 'streaming' || status === 'submitted';
 
   useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
 
   useEffect(() => {
+    if (selectedAgentId && !isCreating) {
+      fetchDocuments(selectedAgentId);
+    } else {
+      clearDocuments();
+    }
+  }, [selectedAgentId, isCreating, fetchDocuments, clearDocuments]);
+
+  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [currentMessages, isTyping, showChat]);
+  }, [chatMessages, isTyping, showChat]);
 
   const handleSelectAgent = (agent: Agent) => {
     setSelectedAgentId(agent.id);
@@ -80,6 +109,19 @@ export default function AgentsPage() {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedAgentId || isCreating) return;
+    setUploadError(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    const result = await uploadDocument(selectedAgentId, formData);
+    if (!result.success) {
+      setUploadError(result.error ?? 'Upload failed');
+    }
+    e.target.value = '';
+  };
+
   const handleSuperpowerToggle = (spId: string) => {
     setFormData(prev => {
       if (prev.superpowerIds.includes(spId)) {
@@ -89,40 +131,11 @@ export default function AgentsPage() {
     });
   };
 
-  const handleSend = () => {
-    if (!input.trim() || !selectedAgentId) return;
-
-    const userMessage: Message = { id: Date.now().toString(), role: 'user', content: input };
-    
-    setMessages(prev => ({
-      ...prev,
-      [selectedAgentId]: [...(prev[selectedAgentId] || []), userMessage]
-    }));
-    
-    setInput('');
-    setIsTyping(true);
-
-    setTimeout(() => {
-      const agentSuperpowerData = selectedAgent?.superpowerIds
-        .map(id => superpowers.find(s => s.id === id))
-        .filter((s): s is NonNullable<typeof s> => Boolean(s)) || [];
-      
-      const spText = agentSuperpowerData.length > 0
-        ? `I have ${agentSuperpowerData.length} superpower(s): ${agentSuperpowerData.map(s => s.name).join(', ')}.`
-        : "I don't have any superpowers attached.";
-
-      const agentMessage: Message = { 
-        id: Date.now().toString(), 
-        role: 'agent', 
-        content: `I am ${selectedAgent?.name}. ${spText} How can I help you?` 
-      };
-      
-      setMessages(prev => ({
-        ...prev,
-        [selectedAgentId]: [...(prev[selectedAgentId] || []), agentMessage]
-      }));
-      setIsTyping(false);
-    }, 1000);
+  const handleChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !selectedAgentId) return;
+    sendMessage({ text: chatInput });
+    setChatInput('');
   };
 
   return (
@@ -352,6 +365,53 @@ export default function AgentsPage() {
                     </div>
                   </section>
 
+                  {!isCreating && selectedAgentId && (
+                    <section className="space-y-4">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em]">Knowledge Base</label>
+                      <p className="text-sm text-slate-500">Upload CSV files. The agent can search them during chat.</p>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center gap-2 px-4 py-3 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-slate-600 hover:bg-slate-100 hover:border-indigo-200 hover:text-indigo-600 transition-all text-sm font-medium"
+                      >
+                        <FileUp size={18} /> Upload CSV
+                      </button>
+                      {uploadError && (
+                        <p className="text-sm text-red-600">{uploadError}</p>
+                      )}
+                      {documents.length === 0 ? (
+                        <div className="p-6 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center text-slate-400 text-sm">
+                          No documents yet.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {documents.map((doc) => (
+                            <div
+                              key={doc.id}
+                              className="p-3 bg-white rounded-xl border border-slate-100 flex items-center justify-between shadow-sm"
+                            >
+                              <span className="text-sm font-medium text-slate-900 truncate">{doc.name}</span>
+                              <button
+                                type="button"
+                                onClick={() => deleteDocument(doc.id)}
+                                className="p-2 text-slate-300 hover:text-red-600 transition-all shrink-0"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  )}
+
                   <div className="pt-8 border-t border-slate-100 flex justify-end gap-3">
                     <button 
                       type="button" 
@@ -373,41 +433,63 @@ export default function AgentsPage() {
               {/* Chat Overlay/Sidebar */}
               {showChat && !isCreating && (
                 <div className="w-[480px] border-l border-slate-100 bg-white flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 shrink-0">
-                  <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/30 shrink-0">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-indigo-600 text-white rounded-xl">
-                        <Bot size={20} />
+                  <div className="p-6 border-b border-slate-100 bg-slate-50/30 shrink-0 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-indigo-600 text-white rounded-xl">
+                          <Bot size={20} />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-slate-900">{selectedAgent?.name}</h3>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Live Preview</p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="font-bold text-slate-900">{selectedAgent?.name}</h3>
-                        <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Live Preview</p>
-                      </div>
+                      <button onClick={() => setShowChat(false)} className="p-2 text-slate-400 hover:bg-slate-200/50 rounded-xl">
+                        <X size={20} />
+                      </button>
                     </div>
-                    <button onClick={() => setShowChat(false)} className="p-2 text-slate-400 hover:bg-slate-200/50 rounded-xl">
-                      <X size={20} />
-                    </button>
+                    <div className="flex gap-1 p-1 bg-white rounded-lg border border-slate-200 w-fit">
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('text')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                          chatMode === 'text' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        <MessageSquare size={14} /> Text
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('voice')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                          chatMode === 'voice' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        <Mic size={14} /> Voice
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-6 space-y-4" ref={scrollRef}>
-                    {currentMessages.length === 0 ? (
+                    {chatMessages.length === 0 ? (
                       <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-4 opacity-50">
                         <Bot size={48} />
                         <p className="text-sm font-medium">Chat is empty</p>
                       </div>
                     ) : (
-                      currentMessages.map(msg => (
+                      chatMessages.map(msg => (
                         <div key={msg.id} className={`flex gap-3 max-w-[90%] ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : ''}`}>
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                            msg.role === 'agent' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'
+                            msg.role === 'assistant' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'
                           }`}>
-                            {msg.role === 'agent' ? <Bot size={16} /> : <User size={16} />}
+                            {msg.role === 'assistant' ? <Bot size={16} /> : <User size={16} />}
                           </div>
                           <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
                             msg.role === 'user' 
                               ? 'bg-slate-900 text-white rounded-tr-none' 
                               : 'bg-slate-50 text-slate-700 border border-slate-100 rounded-tl-none'
                           }`}>
-                            {msg.content}
+                            {getMessageText(msg)}
                           </div>
                         </div>
                       ))
@@ -429,19 +511,19 @@ export default function AgentsPage() {
                   <div className="p-6 bg-white border-t border-slate-100 shrink-0">
                     <form 
                       className="flex gap-2"
-                      onSubmit={e => { e.preventDefault(); handleSend(); }}
+                      onSubmit={handleChatSubmit}
                     >
                       <input 
                         type="text" 
-                        value={input}
-                        onChange={e => setInput(e.target.value)}
+                        value={chatInput}
+                        onChange={e => setChatInput(e.target.value)}
                         placeholder={`Message ${selectedAgent?.name}...`}
                         className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         disabled={isTyping}
                       />
                       <button 
                         type="submit" 
-                        disabled={!input.trim() || isTyping}
+                        disabled={!chatInput.trim() || isTyping}
                         className="p-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-md shadow-indigo-100"
                       >
                         <Send size={18} />

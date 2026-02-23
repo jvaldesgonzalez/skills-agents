@@ -156,3 +156,57 @@ export async function deleteAgent(id: string): Promise<boolean> {
   const result = await prisma.agent.delete({ where: { id } }).catch(() => null);
   return result != null;
 }
+
+export type DocumentRecord = { id: string; name: string; createdAt: Date };
+
+export async function getDocuments(agentId: string): Promise<DocumentRecord[]> {
+  const rows = await prisma.document.findMany({
+    where: { agentId },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, name: true, createdAt: true },
+  });
+  return rows;
+}
+
+export async function uploadDocument(
+  agentId: string,
+  formData: FormData
+): Promise<{ success: boolean; error?: string }> {
+  const file = formData.get('file') as File | null;
+  if (!file) {
+    return { success: false, error: 'No file provided' };
+  }
+  const name = file.name.toLowerCase();
+  if (!name.endsWith('.csv')) {
+    return { success: false, error: 'Only CSV files are allowed' };
+  }
+  let content: string;
+  try {
+    content = await file.text();
+  } catch {
+    return { success: false, error: 'Failed to read file' };
+  }
+  try {
+    await prisma.document.create({
+      data: { agentId, name: file.name, content },
+    });
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Failed to save document' };
+  }
+}
+
+export async function deleteDocument(id: string): Promise<boolean> {
+  const result = await prisma.document.delete({ where: { id } }).catch(() => null);
+  return result != null;
+}
+
+export async function getDocumentsWithContent(
+  agentId: string
+): Promise<Array<{ id: string; name: string; content: string }>> {
+  const rows = await prisma.document.findMany({
+    where: { agentId },
+    select: { id: true, name: true, content: true },
+  });
+  return rows;
+}

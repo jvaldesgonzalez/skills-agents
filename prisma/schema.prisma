@@ -21,10 +21,20 @@ model Superpower {
 }
 
 model Agent {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
-  basePrompt  String   @default("")
+  basePrompt  String    @default("")
   superpowers SuperpowerOnAgents[]
+  documents   Document[]
+}
+
+model Document {
+  id        String   @id @default(cuid())
+  name      String
+  content   String
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 }
 
 model SuperpowerOnAgents {

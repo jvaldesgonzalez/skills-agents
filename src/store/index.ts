@@ -22,10 +22,21 @@ export interface Agent {
   superpowerIds: string[];
 }
 
+export interface Document {
+  id: string;
+  name: string;
+  createdAt: Date;
+}
+
 interface AppState {
   superpowers: Superpower[];
   agents: Agent[];
+  documents: Document[];
   fetchInitialData: () => Promise<void>;
+  fetchDocuments: (agentId: string) => Promise<void>;
+  clearDocuments: () => void;
+  uploadDocument: (agentId: string, formData: FormData) => Promise<{ success: boolean; error?: string }>;
+  deleteDocument: (id: string) => Promise<void>;
   addSuperpower: (superpower: Omit<Superpower, 'id'>) => Promise<void>;
   updateSuperpower: (id: string, superpower: Omit<Superpower, 'id'>) => Promise<void>;
   deleteSuperpower: (id: string) => Promise<void>;
@@ -34,9 +45,32 @@ interface AppState {
   deleteAgent: (id: string) => Promise<void>;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   superpowers: [],
   agents: [],
+  documents: [],
+
+  fetchDocuments: async (agentId) => {
+    const docs = await actions.getDocuments(agentId);
+    set({ documents: docs });
+  },
+
+  clearDocuments: () => set({ documents: [] }),
+
+  uploadDocument: async (agentId, formData) => {
+    const result = await actions.uploadDocument(agentId, formData);
+    if (result.success) {
+      await get().fetchDocuments(agentId);
+    }
+    return result;
+  },
+
+  deleteDocument: async (id) => {
+    const ok = await actions.deleteDocument(id);
+    if (ok) {
+      set((s) => ({ documents: s.documents.filter((d) => d.id !== id) }));
+    }
+  },
 
   fetchInitialData: async () => {
     const [superpowers, agents] = await Promise.all([
