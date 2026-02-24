@@ -2,7 +2,7 @@ import { tool } from '@langchain/core/tools';
 import vm from 'node:vm';
 import { z } from 'zod';
 
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = 50000;
 
 export function createRunScriptTool(scripts: Record<string, string>) {
   return tool(

@@ -1,9 +1,10 @@
 import 'dotenv/config';
-import { PrismaLibSql } from '@prisma/adapter-libsql';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 
-const url = process.env.DATABASE_URL ?? 'file:./dev.db';
-const adapter = new PrismaLibSql({ url });
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) throw new Error('DATABASE_URL is required');
+const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 const DEFAULT_SUPERPOWERS = [

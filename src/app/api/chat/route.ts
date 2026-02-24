@@ -6,7 +6,7 @@ import { createSkillsAgent } from '@/lib/agent';
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  const { messages, agentId, threadId, mode }: { messages: UIMessage[]; agentId: string; threadId?: string; mode?: 'text' | 'voice' } =
+  const { messages, agentId, threadId }: { messages: UIMessage[]; agentId: string; threadId?: string } =
     await req.json();
 
   if (!agentId) {
@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     });
   }
 
-  const agent = await createSkillsAgent(agentId, { mode: mode ?? 'text' });
+  const agent = await createSkillsAgent(agentId);
   const langchainMessages = await toBaseMessages(messages);
   const config = {
     configurable: { thread_id: threadId ?? uuidv4() },

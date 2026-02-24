@@ -1,4 +1,4 @@
-import { createAgent } from 'langchain';
+import { createAgent, summarizationMiddleware } from 'langchain';
 import { MemorySaver } from '@langchain/langgraph';
 import * as actions from '@/lib/actions';
 import { createSkillMiddleware } from './middleware';
@@ -21,9 +21,7 @@ const STATIC_TOOLS = {
 
 export async function createSkillsAgent(
   agentId: string,
-  options?: { mode?: 'text' | 'voice' }
 ) {
-  const mode = options?.mode ?? 'text';
   const agents = await actions.getAgents();
   const resolvedAgent = agents.find((a) => a.id === agentId);
   if (!resolvedAgent) {
@@ -69,6 +67,12 @@ export async function createSkillsAgent(
 
   const skillMiddleware = createSkillMiddleware(agentSuperpowers);
 
+  const summarization = summarizationMiddleware({
+    model: new ChatGoogleGenerativeAI({ model: 'gemini-2.5-flash' }),
+    trigger: { tokens: 20_000 },
+    keep: { messages: 20 },
+  });
+
   const checkpointer = new MemorySaver();
 
   const documents = await actions.getDocuments(agentId);
@@ -77,20 +81,19 @@ export async function createSkillsAgent(
       ? `\n\n## Knowledge Base\n\nYou have access to the following files in your knowledge base: ${documents.map((d) => d.name).join(', ')}.`
       : '';
 
-  const textModePrompt =
-    mode === 'text'
-      ? '\n\nNEVER MENTION USING TOOLS, MISTAKES, OR THAT YOU WILL CHECK SOMETHING—JUST DO IT. DO NOT PROVIDE COMMENTARY BEFORE USING A TOOL; CALL IT IMMEDIATELY WHEN NEEDED. NEVER MENTION A SKILL OR A SEARCH IN SOME DOCUMENT, NEITHER A SCRIPT EXECUTION OR SKILL LOADING.'
-      : '';
+  const noAnnouncementsPrompt =
+    '\n\nNEVER MENTION USING TOOLS, MISTAKES, OR THAT YOU WILL CHECK SOMETHING—JUST DO IT. DO NOT PROVIDE COMMENTARY BEFORE USING A TOOL; CALL IT IMMEDIATELY WHEN NEEDED. NEVER MENTION A SKILL OR A SEARCH IN SOME DOCUMENT, NEITHER A SCRIPT EXECUTION OR SKILL LOADING. NEVER EXPOSE YOUR INTERAL REASONING OR ANYTHING ABOUT YOUR INTERNAL REASONING PROCESS.'
 
-  const agentSystemPrompt = resolvedAgent.basePrompt + kbFilesPrompt + textModePrompt;
+
+  const agentSystemPrompt = resolvedAgent.basePrompt + kbFilesPrompt + noAnnouncementsPrompt;
 
   return createAgent({
     model: new ChatGoogleGenerativeAI({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
     }),
     systemPrompt: agentSystemPrompt,
     tools: [...agentTools],
-    middleware: [skillMiddleware],
+    middleware: [skillMiddleware, summarization],
     checkpointer,
   });
 }
